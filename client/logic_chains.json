@@ -1,0 +1,27 @@
+[
+    {
+        "attribute": "reversed",
+        "affordance": "operate",
+        "is_positive_affect": false
+    },
+    {
+        "attribute": "covered",
+        "affordance": "operate",
+        "is_positive_affect": false
+    },
+    {
+        "attribute": "filled",
+        "affordance": "operate",
+        "is_positive_affect": false
+    },
+    {
+        "attribute": "plastic",
+        "affordance": "operate",
+        "is_positive_affect": true
+    },
+    {
+        "attribute": "metal",
+        "affordance": "operate",
+        "is_positive_affect": true
+    }
+]

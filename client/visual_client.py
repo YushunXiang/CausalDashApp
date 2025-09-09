@@ -1,0 +1,454 @@
+import asyncio
+import json
+import logging
+import base64
+import io
+import numpy as np
+from PIL import Image
+from sympy import true
+import websockets
+import argparse
+import sys
+import os
+import socket
+import time
+
+logger = logging.getLogger(__name__)
+
+
+class WebSocketVisualizationClient:
+    """
+    WebSocket client that connects to the policy server's visualization stream
+    and displays results using various backends (cv2, dash, plotly).
+    """
+    
+    def __init__(
+        self,
+        server_host: str = "localhost",
+        server_port: int = 8766,
+        visualization_backends: list[str] = ["cv2"],
+        output_dir: str = "remote_visualization_output",
+        show_causal_graph: bool = True,
+        dash_interval_ms: int = 1000,
+        plotly_refresh_ms: int = 1000,
+        plotly_auto_open: bool = True,
+        wait_for_server: bool = True,
+        max_wait_time: int = 300,
+        retry_interval: int = 5,
+    ):
+        self.server_host = server_host
+        self.server_port = server_port
+        self.visualization_backends = visualization_backends
+        self.output_dir = output_dir
+        self.show_causal_graph = show_causal_graph
+        self.dash_interval_ms = dash_interval_ms
+        self.plotly_refresh_ms = plotly_refresh_ms
+        self.plotly_auto_open = plotly_auto_open
+        self.wait_for_server = wait_for_server
+        self.max_wait_time = max_wait_time
+        self.retry_interval = retry_interval
+        
+        self._viz_backends = []
+        self._config_received = False
+        self._running = True
+        
+    def _check_server_availability(self) -> bool:
+        """Check if the server is available by attempting a socket connection"""
+        try:
+            with socket.create_connection((self.server_host, self.server_port), timeout=5):
+                return True
+        except (socket.error, ConnectionRefusedError, OSError):
+            return False
+    
+    async def _wait_for_server(self) -> bool:
+        """Wait for the server to become available"""
+        if not self.wait_for_server:
+            print("⚡ 跳过服务器等待检查")
+            return True
+            
+        logger.info(f"Checking if server is available at {self.server_host}:{self.server_port}")
+        print(f"🔍 检查服务器是否可用: {self.server_host}:{self.server_port}")
+        
+        if self._check_server_availability():
+            logger.info("Server is already available")
+            print("✅ 服务器已经可用")
+            return True
+        
+        logger.info(f"Server not available, waiting up to {self.max_wait_time} seconds (checking every {self.retry_interval} seconds)")
+        print(f"⏳ 服务器暂不可用，等待最多 {self.max_wait_time} 秒 (每 {self.retry_interval} 秒检查一次)")
+        
+        start_time = time.time()
+        while time.time() - start_time < self.max_wait_time:
+            if not self._running:
+                print("🛑 客户端停止运行")
+                return False
+                
+            await asyncio.sleep(self.retry_interval)
+            
+            if self._check_server_availability():
+                elapsed_time = time.time() - start_time
+                logger.info(f"Server became available after {elapsed_time:.1f} seconds")
+                print(f"✅ 服务器在 {elapsed_time:.1f} 秒后变为可用")
+                return True
+            else:
+                elapsed_time = time.time() - start_time
+                logger.info(f"Server still not available after {elapsed_time:.1f} seconds, continuing to wait...")
+                print(f"⏳ 等待 {elapsed_time:.1f} 秒后服务器仍不可用，继续等待...")
+        
+        logger.error(f"Server did not become available within {self.max_wait_time} seconds")
+        print(f"❌ 服务器在 {self.max_wait_time} 秒内未变为可用")
+        return False
+        
+    async def connect_and_run(self):
+        """Connect to the server and start receiving visualization data"""
+        # Wait for server to be available
+        if not await self._wait_for_server():
+            logger.error("Cannot connect to server - server is not available")
+            return
+            
+        uri = f"ws://{self.server_host}:{self.server_port}"
+        
+        try:
+            logger.info(f"Connecting to visualization server at {uri}")
+            print(f"🌐 正在连接到可视化服务器: {uri}")
+            
+            async with websockets.connect(uri) as websocket:
+                logger.info(f"Successfully connected to visualization server at {uri}")
+                print(f"✅ 成功连接到可视化服务器: {uri}")
+                print(f"🎯 开始监听数据包...")
+                print("=" * 60)
+                
+                async for message in websocket:
+                    if not self._running:
+                        break
+                        
+                    try:
+                        # Print raw message data
+                        # print(f"📦 收到原始数据包: {message}")
+                        
+                        data = json.loads(message)
+                        
+                        # Print parsed JSON data
+                        # print(f"📋 解析后的JSON数据:")
+                        # print(json.dumps(data, indent=2, ensure_ascii=False))
+                        
+                        await self._handle_message(data)
+                    except Exception as e:
+                        logger.error(f"Error processing message: {e}")
+                        # print(f"❌ 数据处理错误: {e}")
+                        # print(f"🔍 原始消息内容: {message[:500]}...")  # 只显示前500字符
+                        
+        except websockets.exceptions.ConnectionClosed:
+            logger.info("Connection to server closed")
+            print("🔌 与服务器的连接已关闭")
+        except websockets.exceptions.ConnectionRefused:
+            logger.error("Connection refused by server")
+            print("❌ 服务器拒绝连接")
+        except Exception as e:
+            logger.error(f"Connection error: {e}")
+            print(f"❌ 连接错误: {e}")
+        finally:
+            print("🧹 开始清理资源...")
+            self._cleanup()
+    
+    async def _handle_message(self, data):
+        """Handle incoming messages from the server"""
+        msg_type = data.get("type", "unknown")
+        
+        print(f"🎯 处理消息类型: {msg_type}")
+        print(f"📊 消息数据结构:")
+        # for key, value in data.items():
+        #     if key == "image":
+        #         # 图像数据太长，只显示前50字符
+        #         print(f"  {key}: {str(value)[:50]}... (base64 image data)")
+        #     elif isinstance(value, (list, dict)):
+        #         print(f"  {key}: {type(value).__name__} with {len(value)} items")
+        #     else:
+        #         print(f"  {key}: {value}")
+        
+        if msg_type == "config":
+            await self._handle_config(data)
+        elif msg_type == "frame":
+            await self._handle_frame(data)
+        else:
+            logger.warning(f"Unknown message type: {msg_type}")
+            print(f"⚠️ 未知消息类型: {msg_type}")
+            print(f"🔍 完整数据: {json.dumps(data, indent=2, ensure_ascii=False)}")
+    
+    async def _handle_config(self, config):
+        """Handle initial configuration from server"""
+        logger.info("Received configuration from server")
+        print(f"⚙️ 配置数据:")
+        print(json.dumps(config, indent=2, ensure_ascii=False))
+        
+        # Initialize visualization backends
+        try:
+            # Import visualization backends (assuming they exist)
+            from .backends import make_backends
+            with open("client/logic_chains.json", "r", encoding="utf-8") as f:
+                logic_chains = json.load(f)
+            self._viz_backends = make_backends(
+                self.visualization_backends,
+                output_dir=self.output_dir,
+                show_causal_graph=self.show_causal_graph,
+                logic_chains=logic_chains,  # transfer from config if needed
+                dash_interval_ms=self.dash_interval_ms,
+                plotly_refresh_ms=self.plotly_refresh_ms,
+                plotly_auto_open=self.plotly_auto_open,
+            )
+            
+            self._config_received = True
+            logger.info(f"Initialized {len(self._viz_backends)} visualization backends")
+            
+        except ImportError as e:
+            logger.error(f"Failed to import visualization backends: {e}")
+            # Fallback to basic CV2 implementation
+            self._init_basic_cv2_backend()
+    
+    def _init_basic_cv2_backend(self):
+        """Initialize basic CV2 backend if full backends are not available"""
+        try:
+            import cv2
+            self._cv2_available = True
+            logger.info("Using basic CV2 visualization")
+        except ImportError:
+            logger.error("CV2 not available, visualization disabled")
+            self._cv2_available = False
+    
+    async def _handle_frame(self, frame_data):
+        """Handle incoming frame data with multiple images"""
+        if not self._config_received:
+            logger.warning("Received frame before configuration, skipping")
+            print("⚠️ 在配置之前收到帧数据，跳过处理")
+            return
+        
+        print(f"🖼️ 处理帧数据:")
+        
+        try:
+            # Print frame metadata
+            frame_index = frame_data.get("frame_index", "unknown")
+            results = frame_data.get("results", [])
+            
+            print(f"  帧索引: {frame_index}")
+            print(f"  检测结果数量: {len(results)}")
+            
+            # Print detection results
+            for i, result in enumerate(results):
+                print(f"  检测结果 {i+1}:")
+                for key, value in result.items():
+                    if isinstance(value, list) and len(value) > 5:
+                        print(f"    {key}: [{', '.join(map(str, value[:3]))}...] (length: {len(value)})")
+                    else:
+                        print(f"    {key}: {value}")
+            
+            # Handle multiple images or single image
+            if "images" in frame_data:
+                # Multiple images - concatenate them vertically
+                images_base64 = frame_data["images"]
+                print(f"  接收到 {len(images_base64)} 张图像")
+                
+                img_arrays = []
+                for idx, img_base64 in enumerate(images_base64):
+                    img_bytes = base64.b64decode(img_base64)
+                    img_pil = Image.open(io.BytesIO(img_bytes))
+                    img_array = np.array(img_pil)
+                    img_arrays.append(img_array)
+                    print(f"    图像 {idx+1} 尺寸: {img_array.shape}")
+                
+                # Concatenate images vertically (stack them)
+                img_array = np.vstack(img_arrays)
+                print(f"  拼接后图像尺寸: {img_array.shape}")
+                
+            elif "image" in frame_data:
+                # Single image (backward compatibility)
+                img_base64 = frame_data["image"]
+                print(f"  图像数据长度: {len(img_base64)} 字符")
+                
+                img_bytes = base64.b64decode(img_base64)
+                print(f"  解码后图像字节数: {len(img_bytes)}")
+                
+                img_pil = Image.open(io.BytesIO(img_bytes))
+                img_array = np.array(img_pil)
+                print(f"  图像尺寸: {img_array.shape}")
+            else:
+                logger.error("No image data in frame")
+                return
+            
+            # Extract results
+            results = frame_data["results"]
+            frame_index = frame_data["frame_index"]
+            
+            # Update visualization backends
+            if self._viz_backends:
+                for backend in self._viz_backends:
+                    try:
+                        backend.update(img_array, results, frame_index)
+                    except Exception as e:
+                        logger.warning(f"Backend update failed: {e}")
+            elif hasattr(self, '_cv2_available') and self._cv2_available:
+                self._basic_cv2_display(img_array, results, frame_index)
+                
+        except Exception as e:
+            logger.error(f"Error handling frame: {e}")
+    
+    def _basic_cv2_display(self, img_array, results, frame_index):
+        """Basic CV2 visualization when full backends are not available"""
+        try:
+            import cv2
+            
+            # Convert RGB to BGR for OpenCV
+            img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+            
+            # Create window and position it on the left side of the screen
+            window_name = 'Remote Visualization'
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            
+            # Position window on the left side (x=0) with some top margin (y=50)
+            cv2.moveWindow(window_name, 0, 50)
+            
+            # Resize window to fit the concatenated images nicely
+            # For 3 images of [480, 640], the concatenated size is [1440, 640]
+            # Scale down for better display
+            display_height = 720  # Adjust as needed
+            aspect_ratio = img_bgr.shape[1] / img_bgr.shape[0]
+            display_width = int(display_height * aspect_ratio)
+            cv2.resizeWindow(window_name, display_width, display_height)
+            
+            # Draw bounding boxes and labels
+            for result in results:
+                bbox = result.get('bbox', [])
+                label = result.get('label', 'unknown')
+                
+                if len(bbox) == 4:
+                    x1, y1, x2, y2 = map(int, bbox)
+                    
+                    # Draw bounding box
+                    cv2.rectangle(img_bgr, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    
+                    # Draw label
+                    cv2.putText(img_bgr, label, (x1, y1-10), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                    
+                    # Show top attributes and affordances
+                    top_attrs = result.get('top_attrs', [])[:3]  # Show top 3
+                    top_affs = result.get('top_affs', [])[:3]
+                    attr_probs = result.get('attr_probs', [])[:len(top_attrs)]
+                    aff_probs = result.get('aff_probs', [])[:len(top_affs)]
+                    
+                    # Draw attributes
+                    for i, (attr, prob) in enumerate(zip(top_attrs, attr_probs)):
+                        text = f"{attr}: {prob:.2f}"
+                        cv2.putText(img_bgr, text, (x1, y2 + 15 + i*15),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
+                    
+                    # Draw affordances
+                    for i, (aff, prob) in enumerate(zip(top_affs, aff_probs)):
+                        text = f"{aff}: {prob:.2f}"
+                        cv2.putText(img_bgr, text, (x2 - 150, y2 + 15 + i*15),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+            
+            # Display frame index
+            cv2.putText(img_bgr, f"Frame: {frame_index}", (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            
+            # Show image
+            cv2.imshow(window_name, img_bgr)
+            
+            # Exit on 'q' key
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                self._running = False
+                
+        except Exception as e:
+            logger.error(f"CV2 display error: {e}")
+    
+    def _cleanup(self):
+        """Clean up resources"""
+        if self._viz_backends:
+            for backend in self._viz_backends:
+                try:
+                    backend.stop()
+                except Exception:
+                    pass
+        
+        if hasattr(self, '_cv2_available') and self._cv2_available:
+            try:
+                import cv2
+                cv2.destroyAllWindows()
+            except ImportError:
+                pass
+        
+        logger.info("Visualization client cleaned up")
+    
+    def stop(self):
+        """Stop the client"""
+        self._running = False
+
+
+async def main():
+    parser = argparse.ArgumentParser(description="Remote Visualization Client")
+    parser.add_argument("--host", default="localhost", help="Server host")
+    parser.add_argument("--port", type=int, default=8766, help="Server port")
+    parser.add_argument("--backends", nargs="+", default=["cv2"], 
+                       choices=["cv2", "dash", "plotly"],
+                       help="Visualization backends to use")
+    parser.add_argument("--output-dir", default="remote_visualization_output",
+                       help="Output directory for saved visualizations")
+    parser.add_argument("--no-causal-graph", action="store_true",
+                       help="Disable causal graph display")
+    parser.add_argument("--dash-interval", type=int, default=1000,
+                       help="Dash update interval in milliseconds")
+    parser.add_argument("--plotly-refresh", type=int, default=1000,
+                       help="Plotly refresh interval in milliseconds")
+    parser.add_argument("--no-plotly-auto-open", action="store_true",
+                       help="Disable auto-opening Plotly browser")
+    parser.add_argument("--no-wait", action="store_true",
+                       help="Don't wait for server to become available")
+    parser.add_argument("--max-wait-time", type=int, default=300,
+                       help="Maximum time to wait for server (seconds)")
+    parser.add_argument("--retry-interval", type=int, default=5,
+                       help="Interval between server availability checks (seconds)")
+    
+    args = parser.parse_args()
+    
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    print("🎬 可视化客户端启动")
+    print("=" * 50)
+    print(f"🌐 服务器地址: {args.host}:{args.port}")
+    print(f"🎨 可视化后端: {args.backends}")
+    print(f"📁 输出目录: {args.output_dir}")
+    print(f"⏰ 等待服务器: {not args.no_wait}")
+    if not args.no_wait:
+        print(f"⏱️ 最大等待时间: {args.max_wait_time}秒")
+        print(f"🔄 重试间隔: {args.retry_interval}秒")
+    print("=" * 50)
+    
+    logging.info(args)
+    client = WebSocketVisualizationClient(
+        server_host=args.host,
+        server_port=args.port,
+        visualization_backends=args.backends,
+        output_dir=args.output_dir,
+        show_causal_graph=not args.no_causal_graph,
+        dash_interval_ms=args.dash_interval,
+        plotly_refresh_ms=args.plotly_refresh,
+        plotly_auto_open=not args.no_plotly_auto_open,
+        wait_for_server=not args.no_wait,
+        max_wait_time=args.max_wait_time,
+        retry_interval=args.retry_interval,
+    )
+    
+    try:
+        await client.connect_and_run()
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+    finally:
+        client.stop()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
