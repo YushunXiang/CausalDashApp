@@ -150,7 +150,7 @@ def build_causal_graph_figure(
     for chain in logic_chains:
         attrs.add(chain["attribute"])
         affs.add(chain["affordance"])
-    attr_prob_dict["filled"] = 1.0
+
     # Combine all probability dictionaries
     all_probs = {**attr_prob_dict, **aff_prob_dict}
     # Create node positions (simple circular layout)
