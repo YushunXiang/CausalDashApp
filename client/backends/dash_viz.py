@@ -82,32 +82,44 @@ class LiveViz:
 
         self._app = Dash(__name__, serve_locally=True, compress=True)
         self._app.enable_dev_tools(dev_tools_hot_reload=False, dev_tools_ui=False)
-        self._app.title = self.title
         self._app.layout = html.Div(
             [
+                # Row 1: main (left) + causal (right)
                 html.Div(
                     [
-                        html.H2(self.title, style={"textAlign": "center"})
-                    ]
-                ),
-                html.Div(
-                    [
-                        dcc.Graph(id="main-graph", style={"height": "70vh", "width": "100%", "margin": "0", "padding": "0"}, config={"displayModeBar": False, "responsive": True}),
-                        dcc.Graph(id="causal-graph", style={"height": "70vh", "width": "100%", "margin": "0", "padding": "0"}, config={"displayModeBar": False, "responsive": True}),
+                        dcc.Graph(
+                            id="main-graph",
+                            style={"height": "50vh", "width": "100%", "margin": "0", "padding": "0"},
+                            config={"displayModeBar": False, "responsive": True},
+                        ),
+                        dcc.Graph(
+                            id="causal-graph",
+                            style={"height": "50vh", "width": "100%", "margin": "0", "padding": "0"},
+                            config={"displayModeBar": False, "responsive": True},
+                        ),
                     ],
                     style={"display": "grid", "gridTemplateColumns": "40% 60%", "gap": "12px"},
                 ),
+                # Row 2: pc (left) + info panel (right)
                 html.Div(
-                    id="info-panel",
-                    children="booting...",  # 默认就有字
-                    style={
-                        "whiteSpace": "pre-wrap",
-                        "fontFamily": "monospace",
-                        "fontSize": "12px",
-                        "border": "1px dashed #bbb",
-                        "padding": "6px",
-                        "marginTop": "8px",
-                    },
+                    [
+                        html.Div(
+                            id="info-panel",
+                            children="等待服务器传回图像",  # 默认就有字
+                            style={
+                                "whiteSpace": "pre-wrap",
+                                "fontFamily": "monospace",
+                                "fontSize": "20px",
+                                "padding": "8px",
+                            },
+                        ),
+                        dcc.Graph(
+                            id="pc-graph",
+                            style={"height": "50vh", "width": "100%", "margin": "0", "padding": "0"},
+                            config={"displayModeBar": False, "responsive": True},
+                        ),
+                    ],
+                    style={"display": "grid", "gridTemplateColumns": "40% 60%", "gap": "12px", "marginTop": "8px"},
                 ),
                 dcc.Interval(id="tick", interval=self.interval_ms, n_intervals=0),
             ],
@@ -116,6 +128,7 @@ class LiveViz:
 
         @self._app.callback(
             Output("main-graph", "figure"),
+            Output("pc-graph", "figure"),
             Output("causal-graph", "figure"),
             Output("info-panel", "children"),
             Input("tick", "n_intervals"),
@@ -132,12 +145,13 @@ class LiveViz:
             frame, results, idx = self._snapshot()
             if frame is None:
                 # 关键：不要 no_update，返回占位（证明回调在触发）
-                return hb_fig, go.Figure(), f"Waiting for frames... ticks={n}"
+                return hb_fig, go.Figure(), go.Figure(), f"Waiting for frames... ticks={n}"
 
             main_fig = self._build_main_figure(frame, results)
+            pc_fig = self._build_pointcloud_figure(results)
             causal_fig = self._build_causal_figure(results)
             info_text = self._build_info_text(results, idx) + f"\n[tick={n}]"
-            return main_fig, causal_fig, info_text
+            return main_fig, pc_fig, causal_fig, info_text
         
         @self._app.server.route("/health")
         def _health():
@@ -152,7 +166,7 @@ class LiveViz:
             # Use the stable Dash API for running a server in scripts
             # (works consistently across Dash 1.x and 2.x).
             self._app.run(
-                debug=False, host=self.host, port=self.port, use_reloader=False
+                debug=True, host=self.host, port=self.port, use_reloader=False
             )
 
         self._server_thread = threading.Thread(target=_serve, daemon=True)
@@ -256,6 +270,57 @@ class LiveViz:
         )
         return fig
 
+    def _extract_pointcloud(self, results: List[Dict[str, Any]]):
+        # Results may contain a sentinel dict with key 'point_cloud'
+        for item in results:
+            if isinstance(item, dict) and "point_cloud" in item:
+                return item["point_cloud"]
+        return None
+
+    def _build_pointcloud_figure(self, results: List[Dict[str, Any]]):
+        pc = self._extract_pointcloud(results)
+        fig = go.Figure()
+        if not pc:
+            fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
+            return fig
+
+        try:
+            pts = pc.get("points")
+            cols = pc.get("colors")
+            if pts is None or cols is None:
+                fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
+                return fig
+            pts = np.asarray(pts)
+            cols = np.asarray(cols)
+            if pts.ndim != 2 or pts.shape[1] != 3:
+                fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
+                return fig
+
+            x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
+            if cols.dtype != np.uint8:
+                cols = np.clip(cols, 0, 255).astype(np.uint8)
+            colors_str = [f"rgb({int(r)},{int(g)},{int(b)})" for r, g, b in cols]
+            scatter = go.Scatter3d(
+                x=x, y=y, z=z,
+                mode="markers",
+                marker=dict(size=2, color=colors_str, opacity=0.9),
+            )
+            fig.add_trace(scatter)
+            fig.update_layout(
+                margin=dict(l=0, r=0, t=0, b=0),
+                scene=dict(
+                    xaxis_title="x", yaxis_title="y", zaxis_title="z",
+                    aspectmode="data",
+                ),
+                uirevision="pc_stream",
+            )
+            return fig
+        except Exception:
+            # keep it empty on failure
+            fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
+            logging.error("Error building point cloud figure", exc_info=True)
+            return fig
+
     def _build_causal_figure(self, results: List[Dict[str, Any]]):
         if not self.logic_chains or not results:
             return go.Figure().update_layout(margin=dict(l=0, r=0, t=0, b=0))
@@ -293,45 +358,63 @@ class LiveViz:
             return fig
 
     def _build_info_text(self, results: List[Dict[str, Any]], frame_index: int) -> str:
-        lines = [f"Frame: {frame_index} | Objects: {len(results)}"]
-        for i, item in enumerate(results[:3]):
-            label = str(item.get("label", ""))
-            # Safely get first values without relying on truthiness of numpy arrays
-            top_attrs_raw = item.get("top_attrs")
-            if top_attrs_raw is None:
-                top_attrs = []
-            elif isinstance(top_attrs_raw, np.ndarray):
-                top_attrs = top_attrs_raw.tolist()
-            else:
-                top_attrs = list(top_attrs_raw)
+        from .graph import CHINESE_DICT
+        
+        lines = [f"第 {frame_index} 帧"]
+        lines += ["检测到“篮子”"]
+        result = results[0] if results else {}
+        if result:
+            top_attrs = result.get("top_attrs", [])
+            attr_probs = result.get("attr_probs", [])
+            top_affs = result.get("top_affs", [])
+            aff_probs = result.get("aff_probs", [])
+            # 只取前3个
+            for i in range(min(3, len(top_attrs))):
+                attr = top_attrs[i]
+                prob = float(attr_probs[i]) if i < len(attr_probs) else 0.0
+                lines.append(f"属性{i+1}: {attr} {CHINESE_DICT[attr]} (置信度: {prob:.2f})")
+            for i in range(min(3, len(top_affs))):
+                aff = top_affs[i]
+                prob = float(aff_probs[i]) if i < len(aff_probs) else 0.0
+                lines.append(f"可供性{i+1}: {aff} {CHINESE_DICT[aff]} (置信度: {prob:.2f})")
+        # for i, item in enumerate(results[:3]):
+        #     label = str(item.get("label", ""))
+        #     # Safely get first values without relying on truthiness of numpy arrays
+        #     top_attrs_raw = item.get("top_attrs")
+        #     if top_attrs_raw is None:
+        #         top_attrs = []
+        #     elif isinstance(top_attrs_raw, np.ndarray):
+        #         top_attrs = top_attrs_raw.tolist()
+        #     else:
+        #         top_attrs = list(top_attrs_raw)
 
-            top_affs_raw = item.get("top_affs")
-            if top_affs_raw is None:
-                top_affs = []
-            elif isinstance(top_affs_raw, np.ndarray):
-                top_affs = top_affs_raw.tolist()
-            else:
-                top_affs = list(top_affs_raw)
+        #     top_affs_raw = item.get("top_affs")
+        #     if top_affs_raw is None:
+        #         top_affs = []
+        #     elif isinstance(top_affs_raw, np.ndarray):
+        #         top_affs = top_affs_raw.tolist()
+        #     else:
+        #         top_affs = list(top_affs_raw)
 
-            attr_probs_raw = item.get("attr_probs")
-            if attr_probs_raw is None:
-                attr_probs = []
-            elif isinstance(attr_probs_raw, np.ndarray):
-                attr_probs = attr_probs_raw.tolist()
-            else:
-                attr_probs = list(attr_probs_raw)
+        #     attr_probs_raw = item.get("attr_probs")
+        #     if attr_probs_raw is None:
+        #         attr_probs = []
+        #     elif isinstance(attr_probs_raw, np.ndarray):
+        #         attr_probs = attr_probs_raw.tolist()
+        #     else:
+        #         attr_probs = list(attr_probs_raw)
 
-            aff_probs_raw = item.get("aff_probs")
-            if aff_probs_raw is None:
-                aff_probs = []
-            elif isinstance(aff_probs_raw, np.ndarray):
-                aff_probs = aff_probs_raw.tolist()
-            else:
-                aff_probs = list(aff_probs_raw)
+        #     aff_probs_raw = item.get("aff_probs")
+        #     if aff_probs_raw is None:
+        #         aff_probs = []
+        #     elif isinstance(aff_probs_raw, np.ndarray):
+        #         aff_probs = aff_probs_raw.tolist()
+        #     else:
+        #         aff_probs = list(aff_probs_raw)
 
-            top_attr = str(top_attrs[0]) if top_attrs else "none"
-            top_aff = str(top_affs[0]) if top_affs else "none"
-            attr_prob = float(attr_probs[0]) if attr_probs else 0.0
-            aff_prob = float(aff_probs[0]) if aff_probs else 0.0
-            lines.append(f"{i+1}. {label}: {top_attr}({attr_prob:.2f}), {top_aff}({aff_prob:.2f})")
+        #     top_attr = str(top_attrs[0]) if top_attrs else "none"
+        #     top_aff = str(top_affs[0]) if top_affs else "none"
+        #     attr_prob = float(attr_probs[0]) if attr_probs else 0.0
+        #     aff_prob = float(aff_probs[0]) if aff_probs else 0.0
+        #     lines.append(f"{i+1}. {label}: {top_attr}({attr_prob:.2f}), {top_aff}({aff_prob:.2f})")
         return "\n".join(lines)

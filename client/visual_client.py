@@ -12,6 +12,7 @@ import sys
 import os
 import socket
 import time
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,11 @@ class WebSocketVisualizationClient:
         wait_for_server: bool = True,
         max_wait_time: int = 300,
         retry_interval: int = 5,
+        vggt_recon_mode: str = "off",  # off | single | multi
+        vggt_conf_percentile: float = 50.0,
+        vggt_max_points: int = 40000,
+        vggt_preprocess_mode: str = "crop",
+        vggt_single_history: int = 6,
     ):
         self.server_host = server_host
         self.server_port = server_port
@@ -47,10 +53,17 @@ class WebSocketVisualizationClient:
         self.wait_for_server = wait_for_server
         self.max_wait_time = max_wait_time
         self.retry_interval = retry_interval
+        # VGGT options
+        self.vggt_recon_mode = vggt_recon_mode
+        self.vggt_conf_percentile = float(vggt_conf_percentile)
+        self.vggt_max_points = int(vggt_max_points)
+        self.vggt_preprocess_mode = vggt_preprocess_mode
+        self.vggt_single_history = int(vggt_single_history)
         
         self._viz_backends = []
         self._config_received = False
         self._running = True
+        self._reconstructor = None
         
     def _check_server_availability(self) -> bool:
         """Check if the server is available by attempting a socket connection"""
@@ -101,6 +114,34 @@ class WebSocketVisualizationClient:
         
     async def connect_and_run(self):
         """Connect to the server and keep running, auto-reconnecting on drop"""
+        # Pre-initialize VGGT reconstructor before attempting server connection,
+        # so model can load while we wait and avoid reloading on reconnects.
+        try:
+            if (self.vggt_recon_mode or "off").lower() in ("single", "multi") and self._reconstructor is None:
+                from client.reconstruction.vggt_recon import VGGTReconstructor, VGGTReconConfig
+                recon_cfg = VGGTReconConfig(
+                    model_path="./models/facebook/VGGT-1B",
+                    preprocess_mode=self.vggt_preprocess_mode,
+                    conf_percentile=self.vggt_conf_percentile,
+                    max_points=self.vggt_max_points,
+                    single_history=self.vggt_single_history,
+                )
+                self._reconstructor = VGGTReconstructor(recon_cfg)
+                # Warmup in a background thread so we can still await server
+                def _warmup():
+                    try:
+                        ok = self._reconstructor.warmup()
+                        if ok:
+                            print("🔥 VGGT 模型已加载完成")
+                        else:
+                            print("⚠️ VGGT 模型预加载失败，将在首次使用时重试")
+                    except Exception as e:
+                        print(f"⚠️ VGGT 预加载异常: {e}")
+                t = threading.Thread(target=_warmup, daemon=True)
+                t.start()
+        except Exception as e:
+            print(f"⚠️ 初始化 VGGT 重建器失败: {e}")
+
         # Initial wait for server (respect configured max wait time)
         if not await self._wait_for_server():
             logger.error("Cannot connect to server - server is not available")
@@ -214,6 +255,22 @@ class WebSocketVisualizationClient:
                     plotly_refresh_ms=self.plotly_refresh_ms,
                     plotly_auto_open=self.plotly_auto_open,
                 )
+            # Initialize VGGT reconstructor if enabled
+            if (self.vggt_recon_mode or "off").lower() in ("single", "multi") and self._reconstructor is None:
+                try:
+                    from client.reconstruction.vggt_recon import VGGTReconstructor, VGGTReconConfig
+                    recon_cfg = VGGTReconConfig(
+                        model_path="./models/facebook/VGGT-1B",
+                        preprocess_mode=self.vggt_preprocess_mode,
+                        conf_percentile=self.vggt_conf_percentile,
+                        max_points=self.vggt_max_points,
+                        single_history=self.vggt_single_history,
+                    )
+                    self._reconstructor = VGGTReconstructor(recon_cfg)
+                    print("✅ 已启用 VGGT 三维重建模块")
+                except Exception as e:
+                    self._reconstructor = None
+                    print(f"⚠️ VGGT 重建模块初始化失败: {e}")
             
             self._config_received = True
             logger.info(f"Initialized {len(self._viz_backends)} visualization backends")
@@ -270,6 +327,9 @@ class WebSocketVisualizationClient:
                 for idx, img_base64 in enumerate(images_base64):
                     img_bytes = base64.b64decode(img_base64)
                     img_pil = Image.open(io.BytesIO(img_bytes))
+                    w, h = img_pil.size   # PIL 的 size 顺序是 (width, height)
+                    top, bottom = 40, h - 40
+                    img_pil = img_pil.crop((0, top, w, bottom))
                     if img_pil.mode != 'RGB':
                         img_pil = img_pil.convert('RGB')
                     imgs_pil.append(img_pil)
@@ -279,8 +339,8 @@ class WebSocketVisualizationClient:
                     # Desired layout:
                     # - Top: first image resized to [480*2, 640*2] => (960, 1280)
                     # - Bottom: second and third images side-by-side, each [480, 640]
-                    target_small_w, target_small_h = 640, 480
-                    target_big_w, target_big_h = 640 * 2, 480 * 2
+                    target_small_w, target_small_h = 640, 400
+                    target_big_w, target_big_h = 640 * 2, 400 * 2
 
                     # Resize images accordingly
                     top_img = imgs_pil[0].resize((target_big_w, target_big_h), Image.BILINEAR)
@@ -308,6 +368,14 @@ class WebSocketVisualizationClient:
                         print(f"    图像 {idx+1} 尺寸: {arr.shape}")
                     img_array = np.vstack(img_arrays)
                     print(f"  竖直拼接后图像尺寸: {img_array.shape}")
+                # VGGT multi-view reconstruction (optional)
+                vggt_pc = None
+                if self._reconstructor is not None and (self.vggt_recon_mode or "off").lower() == "multi":
+                    try:
+                        imgs_np = [np.array(p) for p in imgs_pil]
+                        vggt_pc = self._reconstructor.reconstruct_multi(imgs_np)
+                    except Exception as e:
+                        print(f"⚠️ VGGT 多视图重建失败: {e}")
                 
             elif "image" in frame_data:
                 # Single image (backward compatibility)
@@ -320,6 +388,13 @@ class WebSocketVisualizationClient:
                 img_pil = Image.open(io.BytesIO(img_bytes))
                 img_array = np.array(img_pil)
                 print(f"  图像尺寸: {img_array.shape}")
+                # VGGT single-view (windowed) reconstruction (optional)
+                vggt_pc = None
+                if self._reconstructor is not None and (self.vggt_recon_mode or "off").lower() == "single":
+                    try:
+                        vggt_pc = self._reconstructor.update_single_and_reconstruct(np.array(img_pil.convert('RGB')))
+                    except Exception as e:
+                        print(f"⚠️ VGGT 单视图重建失败: {e}")
             else:
                 logger.error("No image data in frame")
                 return
@@ -328,6 +403,23 @@ class WebSocketVisualizationClient:
             results = frame_data["results"]
             frame_index = frame_data["frame_index"]
             
+            # Inject VGGT point cloud into results if any
+            try:
+                vggt_pc_local = locals().get('vggt_pc', None)
+                if isinstance(vggt_pc_local, dict) and vggt_pc_local.get("points") is not None and vggt_pc_local.get("colors") is not None:
+                    pts = np.asarray(vggt_pc_local["points"]).tolist()
+                    cols = np.asarray(vggt_pc_local["colors"]).tolist()
+                    results = list(results) + [{
+                        "point_cloud": {
+                            "points": pts,
+                            "colors": cols,
+                            "num_points": int(vggt_pc_local.get("num_points", len(pts))),
+                            "source": vggt_pc_local.get("source", "unknown"),
+                        }
+                    }]
+            except Exception:
+                pass
+
             # Update visualization backends
             if self._viz_backends:
                 for backend in self._viz_backends:
@@ -398,7 +490,7 @@ class WebSocketVisualizationClient:
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
             
             # Display frame index
-            cv2.putText(img_bgr, f"Frame: {frame_index}", (10, 30),
+            cv2.putText(img_bgr, f"第 {frame_index} 帧", (10, 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
             
             # Show image
@@ -457,6 +549,16 @@ async def main():
                        help="Maximum time to wait for server (seconds)")
     parser.add_argument("--retry-interval", type=int, default=5,
                        help="Interval between server availability checks (seconds)")
+    parser.add_argument("--vggt-recon", type=str, default="off", choices=["off", "single", "multi"],
+                       help="Enable VGGT 3D reconstruction: off | single | multi")
+    parser.add_argument("--vggt-conf", type=float, default=50.0,
+                       help="Confidence percentile filter for points (0..100)")
+    parser.add_argument("--vggt-max-points", type=int, default=40000,
+                       help="Max number of points to render")
+    parser.add_argument("--vggt-preprocess", type=str, default="crop", choices=["crop", "pad"],
+                       help="Preprocess mode for VGGT input")
+    parser.add_argument("--vggt-single-history", type=int, default=6,
+                       help="Window size for single-view reconstruction")
     
     args = parser.parse_args()
     
@@ -490,6 +592,11 @@ async def main():
         wait_for_server=not args.no_wait,
         max_wait_time=args.max_wait_time,
         retry_interval=args.retry_interval,
+        vggt_recon_mode=args.vggt_recon,
+        vggt_conf_percentile=args.vggt_conf,
+        vggt_max_points=args.vggt_max_points,
+        vggt_preprocess_mode=args.vggt_preprocess,
+        vggt_single_history=args.vggt_single_history,
     )
     
     try:
