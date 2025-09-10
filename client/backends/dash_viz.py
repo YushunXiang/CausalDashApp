@@ -92,8 +92,8 @@ class LiveViz:
                 ),
                 html.Div(
                     [
-                        dcc.Graph(id="main-graph", style={"height": "90vh", "width": "100%", "margin": "0", "padding": "0"}, config={"displayModeBar": False, "responsive": True}),
-                        dcc.Graph(id="causal-graph", style={"height": "90vh", "width": "100%"}),
+                        dcc.Graph(id="main-graph", style={"height": "70vh", "width": "100%", "margin": "0", "padding": "0"}, config={"displayModeBar": False, "responsive": True}),
+                        dcc.Graph(id="causal-graph", style={"height": "70vh", "width": "100%", "margin": "0", "padding": "0"}, config={"displayModeBar": False, "responsive": True}),
                     ],
                     style={"display": "grid", "gridTemplateColumns": "40% 60%", "gap": "12px"},
                 ),
@@ -269,7 +269,7 @@ class LiveViz:
         if not top_affs:
             return go.Figure().update_layout(margin=dict(l=0, r=0, t=0, b=0))
 
-        affordance_name = str(top_affs[0])
+        affordance_name = str(top_affs[1])
         attr_prob_dict = {a: float(p) for a, p in zip(top_attrs, attr_probs[: len(top_attrs)])}
         aff_prob_dict = {a: float(p) for a, p in zip(top_affs, aff_probs[: len(top_affs)])}
 
