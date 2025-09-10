@@ -92,8 +92,8 @@ class LiveViz:
                 ),
                 html.Div(
                     [
-                        dcc.Graph(id="main-graph", style={"height": "60vh", "width": "100%", "margin": "0", "padding": "0"}, config={"displayModeBar": False, "responsive": True}),
-                        dcc.Graph(id="causal-graph", style={"height": "60vh", "width": "100%"}),
+                        dcc.Graph(id="main-graph", style={"height": "90vh", "width": "100%", "margin": "0", "padding": "0"}, config={"displayModeBar": False, "responsive": True}),
+                        dcc.Graph(id="causal-graph", style={"height": "90vh", "width": "100%"}),
                     ],
                     style={"display": "grid", "gridTemplateColumns": "40% 60%", "gap": "12px"},
                 ),

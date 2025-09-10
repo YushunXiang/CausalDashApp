@@ -5,6 +5,9 @@ import numpy as np
 import plotly.graph_objects as go
 from PIL import Image
 
+# Scale factor to make the causal graph elements larger without changing dcc.Graph
+CAUSAL_GRAPH_SCALE = 1.35  # Increase to make nodes/text/lines bigger
+
 
 PLOT_COLORs = {
     "border": "#E6770B",
@@ -177,6 +180,7 @@ def build_causal_graph_figure(
         existing_connections.add((aff, attr))
     
     # Draw all possible connections between nodes
+    edge_width_base = 5 * CAUSAL_GRAPH_SCALE
     for i, node1 in enumerate(all_nodes):
         for j, node2 in enumerate(all_nodes):
             if i >= j:  # Avoid duplicate lines and self-connections
@@ -207,18 +211,18 @@ def build_causal_graph_figure(
                     
                     # Choose line style and color based on is_positive_affect
                     if is_positive:
-                        line_style = dict(color=f"rgba(86, 86, 86, 0.3)", width=5, dash="dash")
+                        line_style = dict(color=f"rgba(86, 86, 86, 0.3)", width=edge_width_base, dash="dash")
                         hover_text = f"<b>{attr} → (无因果关系)</b><br>Edge Probability: {edge_prob:.3f}<extra></extra>"
                     else:
-                        line_style = dict(color=f"rgba(244, 67, 54, {opacity})", width=5)
+                        line_style = dict(color=f"rgba(244, 67, 54, {opacity})", width=edge_width_base)
                         hover_text = f"<b>{attr} → (因果关系)</b><br>Edge Probability: {edge_prob:.3f}<br>Opacity: {opacity:.3f}<extra></extra>"
                 else:
                     # Fallback for existing connections without clear causal data
-                    line_style = dict(color=f"rgba(86, 86, 86, 0.3)", width=5, dash="dash")
+                    line_style = dict(color=f"rgba(86, 86, 86, 0.3)", width=edge_width_base, dash="dash")
                     hover_text = f"<b>{node1} ↔ {node2}</b><br>无因果关系<extra></extra>"
             else:
                 # No causal relationship - draw dashed gray line
-                line_style = dict(color=f"rgba(86, 86, 86, 0.3)", width=5, dash="dash")
+                line_style = dict(color=f"rgba(86, 86, 86, 0.3)", width=edge_width_base, dash="dash")
                 hover_text = f"<b>{node1} ↔ {node2}</b><br>无因果关系<extra></extra>"
             
             fig.add_trace(
@@ -240,28 +244,29 @@ def build_causal_graph_figure(
         # Calculate brightness using HSV (0.3 to 1.0 range for value)
         brightness = 1.0 # 0.3 + 0.7 * min(prob, 1.0)
         # Different base colors for attrs vs affs using HSV
-        if node in attrs and not attr_is_pos[node]:
+        if node in attrs and not attr_is_pos.get(node, False):
             # Blue hue for attributes (hue=0.6, saturation=0.8)
             r, g, b = hsv_to_rgb(0.6, 0.8, brightness)
             a = 1.0
-            base_size = 40 + 80 * min(prob, 1.0)
+            base_size = (40 + 80 * min(prob, 1.0)) * CAUSAL_GRAPH_SCALE
         else:
             # Orange hue for affordances (hue=0.1, saturation=0.8)
             r, g, b = 51, 133, 255
             a = 0.3
             # Calculate size based on probability (40 to 80 range)
-            base_size = 40
+            base_size = 40 * CAUSAL_GRAPH_SCALE
         
         # Highlight the selected affordance
         if node == affordance_name:
             # Pink hue for selected affordance (hue=0.9, saturation=0.8)
             r, g, b = hsv_to_rgb(0.9, 0.8, brightness)
             a = 1.0
-            size = base_size + 10  # Slightly larger for selected affordance
+            size = base_size + 10 * CAUSAL_GRAPH_SCALE  # Slightly larger for selected affordance
         else:
             size = base_size
         
-        color = f"rgb({r}, {g}, {b}, {a})"
+        # Use rgba for alpha support
+        color = f"rgba({r}, {g}, {b}, {a})"
         
         # Get Chinese translation
         chinese_text = chinese_dict.get(node, node)
@@ -271,10 +276,10 @@ def build_causal_graph_figure(
                 x=[pos[0]],
                 y=[pos[1]],
                 mode="markers+text",
-                marker=dict(size=size, color=color, line=dict(width=2, color="white")),
+                marker=dict(size=size, color=color, line=dict(width=max(1, 2 * CAUSAL_GRAPH_SCALE), color="white")),
                 text=chinese_text,
                 textposition="middle center",
-                textfont=dict(size=10, color="white", family="Arial Black"),
+                textfont=dict(size=int(10 * CAUSAL_GRAPH_SCALE), color="white", family="Arial Black"),
                 showlegend=False,
                 hovertemplate=f"<b>{chinese_text}</b> ({node})<br>Probability: {prob:.3f}<extra></extra>",
             )
@@ -285,7 +290,7 @@ def build_causal_graph_figure(
         go.Scatter(
             x=[None], y=[None],
             mode="lines",
-            line=dict(color="#565656", width=3, dash="dash"),
+            line=dict(color="#565656", width=max(1, 3 * CAUSAL_GRAPH_SCALE), dash="dash"),
             name="无因果关系",
             showlegend=True,
         )
@@ -303,7 +308,7 @@ def build_causal_graph_figure(
         go.Scatter(
             x=[None], y=[None],
             mode="lines",
-            line=dict(color="rgba(244, 67, 54, 0.1)", width=3),
+            line=dict(color="rgba(244, 67, 54, 0.1)", width=max(1, 3 * CAUSAL_GRAPH_SCALE)),
             name="因果关系小",
             showlegend=True,
         )
@@ -312,7 +317,7 @@ def build_causal_graph_figure(
         go.Scatter(
             x=[None], y=[None],
             mode="lines",
-            line=dict(color="rgba(244, 67, 54, 1.0)", width=3),
+            line=dict(color="rgba(244, 67, 54, 1.0)", width=max(1, 3 * CAUSAL_GRAPH_SCALE)),
             name="因果关系大",
             showlegend=True,
         )
@@ -321,7 +326,7 @@ def build_causal_graph_figure(
         go.Scatter(
             x=[None], y=[None],
             mode="markers",
-            marker=dict(size=20, color="rgba(33, 150, 243, 0.8)"),
+            marker=dict(size=int(20 * CAUSAL_GRAPH_SCALE), color="rgba(33, 150, 243, 0.8)"),
             name="属性",
             showlegend=True,
         )
@@ -330,7 +335,7 @@ def build_causal_graph_figure(
         go.Scatter(
             x=[None], y=[None],
             mode="markers",
-            marker=dict(size=20, color="rgba(255, 152, 0, 0.8)"),
+            marker=dict(size=int(20 * CAUSAL_GRAPH_SCALE), color="rgba(255, 152, 0, 0.8)"),
             name="可供性",
             showlegend=True,
         )
@@ -339,12 +344,12 @@ def build_causal_graph_figure(
     # Configure layout
     fig.update_layout(
         showlegend=True,
-        legend=dict(x=0, y=1, bgcolor="rgba(255, 255, 255, 0.8)"),
+        legend=dict(x=0, y=1, bgcolor="rgba(255, 255, 255, 0.8)", font=dict(size=int(12 * CAUSAL_GRAPH_SCALE))),
         xaxis=dict(visible=False, range=[-4, 4]),
         yaxis=dict(visible=False, range=[-4, 4], scaleanchor="x"),
         plot_bgcolor="white",
         paper_bgcolor="white",
-        margin=dict(l=20, r=20, t=20, b=20),
+        margin=dict(l=12, r=12, t=12, b=12),
         height=400,
     )
     
