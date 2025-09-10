@@ -171,7 +171,7 @@ class DebugVisualizationServer:
             
             # Select random attributes and affordances
             selected_attrs = ["covered", "reversed", "filled", "plastic", "metal"]
-            selected_affs = ["operate"]
+            selected_affs = ["observe", "operate"]
             num_attrs = len(selected_attrs)
             num_affs = len(selected_affs)
             
