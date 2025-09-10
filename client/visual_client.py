@@ -100,56 +100,70 @@ class WebSocketVisualizationClient:
         return False
         
     async def connect_and_run(self):
-        """Connect to the server and start receiving visualization data"""
-        # Wait for server to be available
+        """Connect to the server and keep running, auto-reconnecting on drop"""
+        # Initial wait for server (respect configured max wait time)
         if not await self._wait_for_server():
             logger.error("Cannot connect to server - server is not available")
             return
-            
+
         uri = f"ws://{self.server_host}:{self.server_port}"
-        
-        try:
-            logger.info(f"Connecting to visualization server at {uri}")
-            print(f"🌐 正在连接到可视化服务器: {uri}")
-            
-            async with websockets.connect(uri) as websocket:
-                logger.info(f"Successfully connected to visualization server at {uri}")
-                print(f"✅ 成功连接到可视化服务器: {uri}")
-                print(f"🎯 开始监听数据包...")
-                print("=" * 60)
-                
-                async for message in websocket:
-                    if not self._running:
-                        break
-                        
-                    try:
-                        # Print raw message data
-                        # print(f"📦 收到原始数据包: {message}")
-                        
-                        data = json.loads(message)
-                        
-                        # Print parsed JSON data
-                        # print(f"📋 解析后的JSON数据:")
-                        # print(json.dumps(data, indent=2, ensure_ascii=False))
-                        
-                        await self._handle_message(data)
-                    except Exception as e:
-                        logger.error(f"Error processing message: {e}")
-                        # print(f"❌ 数据处理错误: {e}")
-                        # print(f"🔍 原始消息内容: {message[:500]}...")  # 只显示前500字符
-                        
-        except websockets.exceptions.ConnectionClosed:
-            logger.info("Connection to server closed")
-            print("🔌 与服务器的连接已关闭")
-        except websockets.exceptions.ConnectionRefused:
-            logger.error("Connection refused by server")
-            print("❌ 服务器拒绝连接")
-        except Exception as e:
-            logger.error(f"Connection error: {e}")
-            print(f"❌ 连接错误: {e}")
-        finally:
-            print("🧹 开始清理资源...")
-            self._cleanup()
+
+        while self._running:
+            try:
+                logger.info(f"Connecting to visualization server at {uri}")
+                print(f"🌐 正在连接到可视化服务器: {uri}")
+
+                async with websockets.connect(uri) as websocket:
+                    logger.info(f"Successfully connected to visualization server at {uri}")
+                    print(f"✅ 成功连接到可视化服务器: {uri}")
+                    print(f"🎯 开始监听数据包...")
+                    print("=" * 60)
+
+                    # Reset config state so we accept a fresh config if needed
+                    # but avoid reinitializing backends if they're already running
+                    # (handled inside _handle_config)
+                    self._config_received = False
+
+                    async for message in websocket:
+                        if not self._running:
+                            break
+
+                        try:
+                            data = json.loads(message)
+                            await self._handle_message(data)
+                        except Exception as e:
+                            logger.error(f"Error processing message: {e}")
+
+                # If the async for loop exits without exception, connection closed
+                if not self._running:
+                    break
+                logger.info("Connection to server closed; will attempt to reconnect")
+                print("🔌 连接关闭，准备重连…")
+            except websockets.exceptions.ConnectionClosed as e:
+                logger.info(f"Connection closed: {e}")
+                print("🔌 与服务器的连接已关闭，稍后重试…")
+            except (OSError, ConnectionRefusedError) as e:
+                # TCP-level connection issues (refused, DNS, etc.)
+                logger.warning(f"Network connection failed: {e}")
+                print("❌ 无法连接到服务器，稍后重试…")
+            except Exception as e:
+                logger.error(f"Connection error: {e}")
+                print(f"❌ 连接错误: {e}")
+
+            # Wait until server becomes available again (indefinitely)
+            if not self._running:
+                break
+            print("⏳ 等待服务器恢复可用… (按 Ctrl+C 退出)")
+            while self._running and not self._check_server_availability():
+                await asyncio.sleep(self.retry_interval)
+                print("🔄 继续等待服务器…")
+
+            if self._running:
+                print("✅ 检测到服务器恢复，正在重连…")
+
+        # Cleanup when fully stopping
+        print("🧹 开始清理资源…")
+        self._cleanup()
     
     async def _handle_message(self, data):
         """Handle incoming messages from the server"""
@@ -187,15 +201,19 @@ class WebSocketVisualizationClient:
             from .backends import make_backends
             with open("client/logic_chains.json", "r", encoding="utf-8") as f:
                 logic_chains = json.load(f)
-            self._viz_backends = make_backends(
-                self.visualization_backends,
-                output_dir=self.output_dir,
-                show_causal_graph=self.show_causal_graph,
-                logic_chains=logic_chains,  # transfer from config if needed
-                dash_interval_ms=self.dash_interval_ms,
-                plotly_refresh_ms=self.plotly_refresh_ms,
-                plotly_auto_open=self.plotly_auto_open,
-            )
+            # Avoid re-initializing backends on reconnect (e.g., Dash port conflicts)
+            if self._viz_backends:
+                print("⚙️ 已存在可视化后端，跳过重新初始化")
+            else:
+                self._viz_backends = make_backends(
+                    self.visualization_backends,
+                    output_dir=self.output_dir,
+                    show_causal_graph=self.show_causal_graph,
+                    logic_chains=logic_chains,  # transfer from config if needed
+                    dash_interval_ms=self.dash_interval_ms,
+                    plotly_refresh_ms=self.plotly_refresh_ms,
+                    plotly_auto_open=self.plotly_auto_open,
+                )
             
             self._config_received = True
             logger.info(f"Initialized {len(self._viz_backends)} visualization backends")
