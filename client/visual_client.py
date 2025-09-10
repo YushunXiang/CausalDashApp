@@ -243,21 +243,53 @@ class WebSocketVisualizationClient:
             
             # Handle multiple images or single image
             if "images" in frame_data:
-                # Multiple images - concatenate them vertically
+                # Multiple images handling (special layout for 3 images)
                 images_base64 = frame_data["images"]
                 print(f"  接收到 {len(images_base64)} 张图像")
-                
-                img_arrays = []
+
+                # Decode to PIL and ensure RGB
+                imgs_pil = []
                 for idx, img_base64 in enumerate(images_base64):
                     img_bytes = base64.b64decode(img_base64)
                     img_pil = Image.open(io.BytesIO(img_bytes))
-                    img_array = np.array(img_pil)
-                    img_arrays.append(img_array)
-                    print(f"    图像 {idx+1} 尺寸: {img_array.shape}")
-                
-                # Concatenate images vertically (stack them)
-                img_array = np.vstack(img_arrays)
-                print(f"  拼接后图像尺寸: {img_array.shape}")
+                    if img_pil.mode != 'RGB':
+                        img_pil = img_pil.convert('RGB')
+                    imgs_pil.append(img_pil)
+                    print(f"    原始图像 {idx+1} 尺寸: {np.array(img_pil).shape}")
+
+                if len(imgs_pil) == 3:
+                    # Desired layout:
+                    # - Top: first image resized to [480*2, 640*2] => (960, 1280)
+                    # - Bottom: second and third images side-by-side, each [480, 640]
+                    target_small_w, target_small_h = 640, 480
+                    target_big_w, target_big_h = 640 * 2, 480 * 2
+
+                    # Resize images accordingly
+                    top_img = imgs_pil[0].resize((target_big_w, target_big_h), Image.BILINEAR)
+                    bottom_left = imgs_pil[1].resize((target_small_w, target_small_h), Image.BILINEAR)
+                    bottom_right = imgs_pil[2].resize((target_small_w, target_small_h), Image.BILINEAR)
+
+                    top_arr = np.array(top_img)
+                    bl_arr = np.array(bottom_left)
+                    br_arr = np.array(bottom_right)
+
+                    print(f"    顶部图像尺寸(放大): {top_arr.shape}")
+                    print(f"    底部左图尺寸: {bl_arr.shape}")
+                    print(f"    底部右图尺寸: {br_arr.shape}")
+
+                    # Bottom row: concatenate horizontally to width 640*2
+                    bottom_row = np.hstack([bl_arr, br_arr])
+
+                    # Final: stack vertically -> [480*3, 640*2]
+                    img_array = np.vstack([top_arr, bottom_row])
+                    print(f"  拼接后图像尺寸: {img_array.shape} (期望 [1440, 1280, 3])")
+                else:
+                    # Fallback: simple vertical stack for non-3-image cases
+                    img_arrays = [np.array(img) for img in imgs_pil]
+                    for idx, arr in enumerate(img_arrays):
+                        print(f"    图像 {idx+1} 尺寸: {arr.shape}")
+                    img_array = np.vstack(img_arrays)
+                    print(f"  竖直拼接后图像尺寸: {img_array.shape}")
                 
             elif "image" in frame_data:
                 # Single image (backward compatibility)

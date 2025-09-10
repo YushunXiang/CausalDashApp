@@ -152,7 +152,7 @@ class LiveViz:
             # Use the stable Dash API for running a server in scripts
             # (works consistently across Dash 1.x and 2.x).
             self._app.run(
-                debug=True, host=self.host, port=self.port, use_reloader=False
+                debug=False, host=self.host, port=self.port, use_reloader=False
             )
 
         self._server_thread = threading.Thread(target=_serve, daemon=True)
@@ -195,14 +195,14 @@ class LiveViz:
             )
         )
 
-        # Boxes and labels
-        shapes = []
-        annotations = []
-        colors = ["#e74c3c", "#2ecc71", "#3498db", "#f1c40f", "#9b59b6"]
-        for i, item in enumerate(results):
-            bbox = item.get("bbox", [0, 0, 0, 0])
-            label = str(item.get("label", ""))
-            x1, y1, x2, y2 = bbox
+        # # Boxes and labels
+        # shapes = []
+        # annotations = []
+        # colors = ["#e74c3c", "#2ecc71", "#3498db", "#f1c40f", "#9b59b6"]
+        # for i, item in enumerate(results):
+        #     bbox = item.get("bbox", [0, 0, 0, 0])
+        #     label = str(item.get("label", ""))
+        #     x1, y1, x2, y2 = bbox
             # color = colors[i % len(colors)]
             # shapes.append(
             #     dict(type="rect", x0=x1, y0=y1, x1=x2, y1=y2, line=dict(color=color, width=2), fillcolor="rgba(0,0,0,0)")
@@ -221,16 +221,16 @@ class LiveViz:
             #     )
             # )
 
-            # Top attributes/affordances (first 3)
-            top_attrs = list(item.get("top_attrs", []))[:3]
-            top_affs = list(item.get("top_affs", []))[:3]
-            attr_probs = list(item.get("attr_probs", []))[:3]
-            aff_probs = list(item.get("aff_probs", []))[:3]
-            lines = []
-            for a, p in zip(top_attrs, attr_probs):
-                lines.append(f"A: {a} ({float(p):.2f})")
-            for f, p in zip(top_affs, aff_probs):
-                lines.append(f"F: {f} ({float(p):.2f})")
+            # # Top attributes/affordances (first 3)
+            # top_attrs = list(item.get("top_attrs", []))[:3]
+            # top_affs = list(item.get("top_affs", []))[:3]
+            # attr_probs = list(item.get("attr_probs", []))[:3]
+            # aff_probs = list(item.get("aff_probs", []))[:3]
+            # lines = []
+            # for a, p in zip(top_attrs, attr_probs):
+            #     lines.append(f"A: {a} ({float(p):.2f})")
+            # for f, p in zip(top_affs, aff_probs):
+            #     lines.append(f"F: {f} ({float(p):.2f})")
             # if lines:
             #     annotations.append(
             #         dict(
