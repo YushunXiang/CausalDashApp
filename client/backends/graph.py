@@ -271,6 +271,9 @@ def build_causal_graph_figure(
         # Get Chinese translation
         chinese_text = chinese_dict.get(node, node)
         
+        # Dynamically scale label font with node size
+        text_size = int(max(10 * CAUSAL_GRAPH_SCALE, size * 0.3))
+
         fig.add_trace(
             go.Scatter(
                 x=[pos[0]],
@@ -279,7 +282,7 @@ def build_causal_graph_figure(
                 marker=dict(size=size, color=color, line=dict(width=max(1, 2 * CAUSAL_GRAPH_SCALE), color="white")),
                 text=chinese_text,
                 textposition="middle center",
-                textfont=dict(size=int(10 * CAUSAL_GRAPH_SCALE), color="white", family="Arial Black"),
+                textfont=dict(size=text_size, color="white", family="Arial Black"),
                 showlegend=False,
                 hovertemplate=f"<b>{chinese_text}</b> ({node})<br>Probability: {prob:.3f}<extra></extra>",
             )
