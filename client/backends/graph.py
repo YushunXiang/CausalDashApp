@@ -207,18 +207,18 @@ def build_causal_graph_figure(
                     
                     # Choose line style and color based on is_positive_affect
                     if is_positive:
-                        line_style = dict(color=f"rgba(86, 86, 86, 0.3)", width=2, dash="dash")
+                        line_style = dict(color=f"rgba(86, 86, 86, 0.3)", width=5, dash="dash")
                         hover_text = f"<b>{attr} → (无因果关系)</b><br>Edge Probability: {edge_prob:.3f}<extra></extra>"
                     else:
-                        line_style = dict(color=f"rgba(244, 67, 54, {opacity})", width=2)
+                        line_style = dict(color=f"rgba(244, 67, 54, {opacity})", width=5)
                         hover_text = f"<b>{attr} → (因果关系)</b><br>Edge Probability: {edge_prob:.3f}<br>Opacity: {opacity:.3f}<extra></extra>"
                 else:
                     # Fallback for existing connections without clear causal data
-                    line_style = dict(color=f"rgba(86, 86, 86, 0.3)", width=2, dash="dash")
+                    line_style = dict(color=f"rgba(86, 86, 86, 0.3)", width=5, dash="dash")
                     hover_text = f"<b>{node1} ↔ {node2}</b><br>无因果关系<extra></extra>"
             else:
                 # No causal relationship - draw dashed gray line
-                line_style = dict(color=f"rgba(86, 86, 86, 0.3)", width=2, dash="dash")
+                line_style = dict(color=f"rgba(86, 86, 86, 0.3)", width=5, dash="dash")
                 hover_text = f"<b>{node1} ↔ {node2}</b><br>无因果关系<extra></extra>"
             
             fig.add_trace(
