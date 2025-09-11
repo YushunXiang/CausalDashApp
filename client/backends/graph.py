@@ -8,6 +8,65 @@ from PIL import Image
 # Scale factor to make the causal graph elements larger without changing dcc.Graph
 CAUSAL_GRAPH_SCALE = 1.35  # Increase to make nodes/text/lines bigger
 
+CHINESE_DICT = {
+    # Common attributes
+    "plastic": "塑料",
+    "metal": "金属",
+    "wood": "木头",
+    "glass": "玻璃",
+    "ceramic": "陶瓷",
+    "fabric": "布料",
+    "rubber": "橡胶",
+    "paper": "纸张",
+    "leather": "皮革",
+    "stone": "石头",
+    "transparent": "透明",
+    "opaque": "不透明",
+    "smooth": "光滑",
+    "rough": "粗糙",
+    "soft": "柔软",
+    "hard": "坚硬",
+    "flexible": "柔韧",
+    "rigid": "刚性",
+    "light": "轻",
+    "heavy": "重",
+    "hot": "热",
+    "cold": "冷",
+    "wet": "湿",
+    "dry": "干",
+    "clean": "干净",
+    "dirty": "脏",
+    # Common affordances
+    "observe": "可观察",
+    "operate": "可操作",
+    "grasp": "抓取",
+    "push": "推",
+    "pull": "拉",
+    "lift": "举起",
+    "carry": "携带",
+    "throw": "投掷",
+    "squeeze": "挤压",
+    "twist": "扭转",
+    "open": "打开",
+    "close": "关闭",
+    "pour": "倾倒",
+    "drink": "饮用",
+    "eat": "食用",
+    "cut": "切割",
+    "break": "破坏",
+    "bend": "弯曲",
+    "fold": "折叠",
+    "write": "书写",
+    "read": "阅读",
+    # State attributes
+    "covered": "覆盖",
+    "filled": "填充",
+    "reversed": "反转",
+    "empty": "空",
+    "full": "满",
+    "open": "开",
+    "closed": "关",
+}
 
 PLOT_COLORs = {
     "border": "#E6770B",
@@ -87,65 +146,6 @@ def build_causal_graph_figure(
     """Build a network-style causal graph with nodes and edges."""
     fig = go.Figure()
     
-    # Chinese translation dictionary
-    chinese_dict = {
-        # Common attributes
-        "plastic": "塑料",
-        "metal": "金属",
-        "wood": "木头",
-        "glass": "玻璃",
-        "ceramic": "陶瓷",
-        "fabric": "布料",
-        "rubber": "橡胶",
-        "paper": "纸张",
-        "leather": "皮革",
-        "stone": "石头",
-        "transparent": "透明",
-        "opaque": "不透明",
-        "smooth": "光滑",
-        "rough": "粗糙",
-        "soft": "柔软",
-        "hard": "坚硬",
-        "flexible": "柔韧",
-        "rigid": "刚性",
-        "light": "轻",
-        "heavy": "重",
-        "hot": "热",
-        "cold": "冷",
-        "wet": "湿",
-        "dry": "干",
-        "clean": "干净",
-        "dirty": "脏",
-        # Common affordances
-        "operate": "可操作",
-        "grasp": "抓取",
-        "push": "推",
-        "pull": "拉",
-        "lift": "举起",
-        "carry": "携带",
-        "throw": "投掷",
-        "squeeze": "挤压",
-        "twist": "扭转",
-        "open": "打开",
-        "close": "关闭",
-        "pour": "倾倒",
-        "drink": "饮用",
-        "eat": "食用",
-        "cut": "切割",
-        "break": "破坏",
-        "bend": "弯曲",
-        "fold": "折叠",
-        "write": "书写",
-        "read": "阅读",
-        # State attributes
-        "covered": "覆盖",
-        "filled": "填充",
-        "reversed": "反转",
-        "empty": "空",
-        "full": "满",
-        "open": "开",
-        "closed": "关",
-    }
     
     # Extract all unique nodes from logic_chains
     attrs = set()
@@ -269,7 +269,7 @@ def build_causal_graph_figure(
         color = f"rgba({r}, {g}, {b}, {a})"
         
         # Get Chinese translation
-        chinese_text = chinese_dict.get(node, node)
+        chinese_text = CHINESE_DICT.get(node, node)
         
         # Dynamically scale label font with node size
         text_size = int(max(10 * CAUSAL_GRAPH_SCALE, size * 0.3))
