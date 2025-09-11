@@ -259,8 +259,8 @@ def build_causal_graph_figure(
         # Highlight the selected affordance
         if node == affordance_name:
             # Pink hue for selected affordance (hue=0.9, saturation=0.8)
-            r, g, b = hsv_to_rgb(0.9, 0.8, brightness)
-            a = 1.0
+            r, g, b = 255, 152, 0
+            a = 0.8
             size = base_size + 10 * CAUSAL_GRAPH_SCALE  # Slightly larger for selected affordance
         else:
             size = base_size
